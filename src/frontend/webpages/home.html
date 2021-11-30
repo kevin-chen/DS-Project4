@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-F3w7mX95PdgyTmZZMECAngseQB83DfGTowi0iMjiWaeVhAn4FJkqJByhZMI3AhiU" crossorigin="anonymous">
+
+  <title>Umbrella Store</title>
+</head>
+<body>
+
+  <div class="container" style="padding: 10px;">
+    <h1>Umbrella Store</h1>
+    <a href="/new-item"><button type="button" class="btn btn-success">Create</button></a>
+    <div class="row">
+      {{range $index, $element := .inventory}}
+      <div class="col" style="padding: 10px;">
+        <!-- <h1>Hello there!{{ .Name }}</h1><form action=''><input type='submit' value='Go to Google' /></form> -->
+        <div class="card" style="width: 18rem">
+          <!-- <img src="..." class="card-img-top" alt="..."> -->
+          <div class="card-body">
+            <h5 class="card-title">{{ .Name }}</h5>
+            <p class="card-text">{{ if .Availability }} In Stock {{ else }} Out of Stock {{ end }}</p>
+            <a href="/details/{{ $index }}" class="btn btn-primary">Details</a>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.1/dist/js/bootstrap.bundle.min.js" integrity="sha384-/bQdsTh/da6pkI1MST/rWKFNjaCP5gBSY4sEBT38Q/9RBh9AH40zEOg7Hlq2THRZ" crossorigin="anonymous"></script>
+</body>
+</html>
+
