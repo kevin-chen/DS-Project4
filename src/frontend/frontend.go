@@ -29,7 +29,8 @@ type Umbrella struct {
 
 type Umbrellas []Umbrella
 
-var backendAddress string
+var leaderAddress string
+var backendList []string
 
 /*
 Purpose: helper function to check for errors
@@ -49,7 +50,8 @@ Purpose: retrieves all the Umbrella array data from backend
 Behavior: calls the READ action to the backend and return array response
 */
 func retrieveAllData() Umbrellas {
-	conn, err := net.Dial("tcp", backendAddress)
+	updateLeaderNode()
+	conn, err := net.Dial("tcp", leaderAddress)
 	checkError("Error creating connection", err)
 
 	fmt.Fprintf(conn, "READ\n")
@@ -72,7 +74,8 @@ Purpose: retrieve a specific Umbrella object from backend
 Behavior: calls the READ action with index parameter and returns the Umbrella object
 */
 func retrieveDataFrom(index string) Umbrella {
-	conn, err := net.Dial("tcp", backendAddress)
+	updateLeaderNode()
+	conn, err := net.Dial("tcp", leaderAddress)
 	checkError("Error creating connection", err)
 
 	msg := "READ " + index + "\n"
@@ -96,7 +99,8 @@ Purpose: delete object from the array in the backend
 Behavior: calls the DELETE action with index parameter
 */
 func deleteDataFrom(index string) {
-	conn, err := net.Dial("tcp", backendAddress)
+	updateLeaderNode()
+	conn, err := net.Dial("tcp", leaderAddress)
 	checkError("Error creating connection", err)
 
 	msg := "DELETE " + index + "\n"
@@ -112,7 +116,8 @@ Purpose: delete object from the array in the backend
 Behavior: calls the DELETE action with index parameter
 */
 func createNewItem(newItem Umbrella) {
-	conn, err := net.Dial("tcp", backendAddress)
+	updateLeaderNode()
+	conn, err := net.Dial("tcp", leaderAddress)
 	checkError("Error creating connection", err)
 
 	// Convert the struct object to bytes
@@ -133,7 +138,8 @@ Purpose: update object with the "id" with a new Umbrella object
 Behavior: calls the UPDATE action with index parameter and new Umbrella object
 */
 func updateDataAt(index string, updateItem Umbrella) {
-	conn, err := net.Dial("tcp", backendAddress)
+	updateLeaderNode()
+	conn, err := net.Dial("tcp", leaderAddress)
 	checkError("Error creating connection", err)
 
 	byteItem, err := json.Marshal(updateItem)
@@ -152,10 +158,37 @@ func startBackends(backendList []string) {
 			checkError("Error creating connection to pass all clear", err)
 
 			msg := "AllClear \n"
-			fmt.Println("Sending all Clear to ", backend)
-			fmt.Fprintf(conn, msg)
+			fmt.Println("Sending AllClear to ", backend)
+			conn.Write([]byte(msg))
+
+			response := make([]byte, 128)
+			conn.Read(response)
+			fmt.Println("Response for AllClear:", string(response))
 
 			conn.Close()
+		}(backend)
+	}
+}
+
+func updateLeaderNode() {
+	for _,backend := range backendList {
+		go func(backend string) {
+			conn, err := net.Dial("tcp", backend)
+			checkError("Error creating connection", err)
+
+			msg := "CheckLeader \n"
+			fmt.Println("Sending CheckLeader to ", backend)
+			conn.Write([]byte(msg))
+
+			response := make([]byte, 128)
+			conn.Read(response)
+			fmt.Println("Response for CheckLeader:", string(response))
+
+			conn.Close()
+
+			if string(response) == "Leader" {
+				leaderAddress = backend
+			}
 		}(backend)
 	}
 }
@@ -166,7 +199,7 @@ func main() {
 	httpPort := flag.String("listen", "8080", "http port number for frontend server to listen on")
 	backendPorts := flag.String("backend", ":8090", "list of all backends available")
 	flag.Parse()
-	backendList := strings.Split(*backendPorts, ",")
+	backendList = strings.Split(*backendPorts, ",")
 	fmt.Println(backendList)
 	startBackends(backendList)
 
