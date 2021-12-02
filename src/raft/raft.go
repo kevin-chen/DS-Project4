@@ -79,21 +79,21 @@ func (rv RequestVoteResponse) String() string {
 }
 
 type AppendEntriesArgument struct {
-	Term         int
-	LeaderId     string
-	prevIndex    int
-	prevTerm     int
-	entries      []string
-	leaderCommit int // Leader's commit index
+	Term         int        `json:"term"`
+	LeaderId     string     `json:"leaderId"`
+	PrevLogIndex int        `json:"prevLogIndex"`
+	PrevLogTerm  int        `json:"prevLogTerm"`
+	Entries      []LogEntry `json:"entries"`
+	LeaderCommit int        `json:"leaderCommit"` // Leader's commit index
 }
 
 func (ae AppendEntriesArgument) String() string {
-	return fmt.Sprintf("Term: %d, LeaderId: %s", ae.Term, ae.LeaderId)
+	return fmt.Sprintf("Term: %d, LeaderId: %s, PrevLogIndex: %d, PrevLogTerm, %d, Entries: %s, Leader Commit Index: %d", ae.Term, ae.LeaderId, ae.PrevLogIndex, ae.PrevLogTerm, ae.Entries, ae.LeaderCommit)
 }
 
 type AppendEntriesResponse struct {
-	Term    int
-	Success bool
+	Term    int  `json:"term"`
+	Success bool `json:"success"`
 }
 
 func (ae AppendEntriesResponse) String() string {
@@ -101,12 +101,12 @@ func (ae AppendEntriesResponse) String() string {
 }
 
 type LogEntry struct {
-	Command string
-	Term    int
+	Command string `json:"command"`
+	Term    int    `json:"term"`
 }
 
 func (le LogEntry) String() string {
-	return fmt.Sprintf("Term: %d, Command: %s", le.Term, le.Command)
+	return fmt.Sprintf("Log Entry <Term: %d, Command: %s>", le.Term, le.Command)
 }
 
 func checkError(message string, err error) {
@@ -229,18 +229,51 @@ func (raft *Raft) sendHeartbeat() {
 	peers := raft.peers
 	raft.mu.Unlock()
 
-	appendEntriesArgument := AppendEntriesArgument{
-		Term:     term,
-		LeaderId: leaderId,
-	}
-
-	log.Printf("Created new AppendEntriesArgument: %s", appendEntriesArgument)
-
 	for _, peer := range peers {
-		response := raft.sendAppendEntries(peer, &appendEntriesArgument)
-		log.Printf("Received response from %s, response: %s", peer, response)
-	}
+		go func(peer string) {
 
+			// CODE HERE for log replication, leader send/response
+
+			raft.mu.Lock()
+			prevLogIndex := raft.nextIndex[peer] - 1
+			var prevLogTerm int
+			var entries []LogEntry
+			log.Printf("prevLogIndex %d", prevLogIndex)
+			if prevLogIndex > -1 {
+				prevLogTerm = raft.log[prevLogIndex].Term
+				entries = raft.log[prevLogIndex:]
+			} else {
+				prevLogTerm = 0
+			}
+
+			appendEntriesArgument := AppendEntriesArgument{
+				Term:         term,
+				LeaderId:     leaderId,
+				PrevLogIndex: prevLogIndex,
+				PrevLogTerm:  prevLogTerm,
+				Entries:      entries,
+				LeaderCommit: raft.commitIndex,
+			}
+			raft.mu.Unlock()
+
+			log.Printf("Created new AppendEntriesArgument: %s", appendEntriesArgument)
+
+			response := raft.sendAppendEntries(peer, &appendEntriesArgument)
+			log.Printf("Received AppendEntries response from %s, response: %s", peer, response)
+
+			if !response.Success {
+				raft.mu.Lock()
+				raft.nextIndex[peer]--
+				raft.mu.Unlock()
+			} else {
+				// if it is a success we try to commit
+				raft.nextIndex[peer] = raft.nextIndex[peer] + len(entries)
+				raft.matchIndex[peer] = raft.nextIndex[peer] - 1
+				// for each index, see if all followers have committed at index. If so, check for quorum and apply
+
+			}
+		}(peer)
+	}
 }
 
 func (raft *Raft) runElection(term int) {
@@ -464,17 +497,55 @@ func (raft *Raft) HandleAppendEntries(message string) *AppendEntriesResponse {
 
 	// Get variables
 	raft.mu.Lock()
-	raft.lastTimeout = time.Now()
+	defer raft.mu.Unlock()
+	raft.lastTimeout = time.Now() // reset election timer
 	currentTerm := raft.currentTerm
-	raft.mu.Unlock()
+	entries := appendEntriesArgument.Entries
+	prevLogIndex := appendEntriesArgument.PrevLogIndex
+	prevLogTerm := appendEntriesArgument.PrevLogTerm
 
-	requestVoteResponse := AppendEntriesResponse{
+	appendEntriesResponse := AppendEntriesResponse{
 		Term:    currentTerm,
 		Success: true,
 	}
 
+	// Reply false if term < currentTerm
 	if appendEntriesArgument.Term < currentTerm {
-		requestVoteResponse.Success = false
+		appendEntriesResponse.Success = false
+		return &appendEntriesResponse
+	}
+
+	//  Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
+	if prevLogIndex != -1 && raft.log[prevLogIndex].Term != prevLogTerm {
+		appendEntriesResponse.Success = false
+		return &appendEntriesResponse
+	}
+
+	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
+	prevLogIndex++
+	entriesIndex := 0
+	for entriesIndex < len(entries) {
+		// reached end of entries
+		if raft.log[prevLogIndex].Term != entries[entriesIndex].Term || prevLogIndex >= len(raft.log) {
+			break
+		}
+		entriesIndex++
+		prevLogIndex++
+	}
+
+	// Append any new entries not already in the log
+	if len(entries) > 0 {
+		raft.log = append(raft.log[:prevLogIndex], entries[entriesIndex:]...)
+	}
+
+	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+	if appendEntriesArgument.LeaderCommit > raft.commitIndex {
+		if appendEntriesArgument.LeaderCommit < len(raft.log)-1 {
+			raft.commitIndex = appendEntriesArgument.LeaderCommit
+		} else {
+			raft.commitIndex = len(raft.log) - 1
+		}
+		// COMMIT all entries that differ between follower and leader
 	}
 
 	//if true {
@@ -484,10 +555,11 @@ func (raft *Raft) HandleAppendEntries(message string) *AppendEntriesResponse {
 	//}
 
 	// Return the RequestVoteResponse with a decision of whether to grant vote
-	return &requestVoteResponse
+	return &appendEntriesResponse
 }
 
 func (raft *Raft) AddToLog(command string) {
+	log.Printf("Adding to log: %s", command)
 	raft.mu.Lock()
 	defer raft.mu.Unlock()
 	entry := LogEntry{

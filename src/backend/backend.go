@@ -117,11 +117,12 @@ func handleConnection(conn net.Conn) {
 			msg := "NotLeader"
 			conn.Write([]byte(msg))
 		}
+	} else if requestSplitMessage[0] == "Apply" {
+		applyAction("")
 	} else {
 		if raftNode.HandleCheckLeader() {
 			raftNode.AddToLog(requestMessage)
 		}
-		//applyAction("")
 	}
 
 	conn.Close()
